@@ -7,6 +7,8 @@ name = "mrs_voxel_planner"
 version = "0.1.0"
 description = "Emulate MRS voxel placement on a 3D T1-weighted image"
 requires-python = ">=3.10"
+license = "MIT"
+license-files = ["LICENSE"]
 dependencies = ["numpy", "scipy", "nibabel", "pyqtgraph", "PyQt6"]
 
 [project.optional-dependencies]

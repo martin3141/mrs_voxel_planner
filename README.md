@@ -69,3 +69,7 @@ readout/phase assignment do. Check them against a real acquisition: load the sca
 or its spec2nii NIfTI-MRS, on the same subject's T1.
 
 Run the tests with `.venv/bin/pytest`.
+
+## License
+
+MIT. See [LICENSE](LICENSE).
