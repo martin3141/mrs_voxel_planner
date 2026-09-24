@@ -29,14 +29,21 @@ In any view:
 | left-drag elsewhere | pan |
 | wheel / right-drag | zoom |
 | middle-drag | contrast (left/right) and brightness (up/down) of the T1 |
+| ctrl + wheel | step that view's slice by one image voxel (turns off **Follow voxel**) |
 
 Rotating in the transverse, coronal and sagittal views turns the voxel about the
 head–foot, anterior–posterior and left–right axes respectively, so combining them reaches any
 orientation. Once the voxel is oblique its cut through a view can have 5 or 6 corners, and every
 one of them is a handle.
 
-The side panel shows and edits the Siemens parameters: position (LPS), readout FOV, phase FOV,
+The panel below the views shows and edits the Siemens parameters: position (LPS), readout FOV, phase FOV,
 thickness, orientation angles, and in-plane rotation, plus the derived slice normal.
+
+The **Slices** section sets where the views cut the T1. With **Follow voxel** ticked (the default)
+all three views pass through the voxel centre. Untick it to set the sagittal, coronal and transverse
+slice positions (LPS mm) independently of the voxel, e.g. to check where its edges fall. Ticking it
+again snaps the views back to the voxel centre. **Show slice lines** draws dashed lines where each
+view's slice cuts the other two, in the colour of that view's title.
 
 The **Display** section has brightness and contrast sliders, shared by all three views.
 **Auto** resets them to the 1st–99.5th percentile intensity window.
@@ -59,7 +66,7 @@ partial-volume voxel mask on the T1 grid (use with FAST/SPM segmentations for ti
   CalcPRS routine), LPS↔RAS conversion, and RDA/NIfTI-MRS readers.
 - `volume.py`: NIfTI loading and trilinear reslicing onto any plane using the affine.
 - `viewer.py`: PyQt6 + pyqtgraph user interface. Radiological transverse, coronal and sagittal
-  views through the voxel centre.
+  views through the voxel centre, or through independently set slice positions.
 
 ## Validating against the scanner
 

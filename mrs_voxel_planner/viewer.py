@@ -1,8 +1,9 @@
 """Qt user interface: three orthogonal views plus a Siemens-style parameter panel.
 
 The views are fixed anatomical planes (radiological convention, as on the
-scanner) that always pass through the voxel centre. The voxel appears as the
-polygon where the box cuts each plane.
+scanner). By default they pass through the voxel centre; untick "Follow voxel"
+to position the slices independently. The voxel appears as the polygon where
+the box cuts each plane.
 
 Mouse, in any view:
   drag a corner handle         rotate the voxel about the axis normal to that
@@ -11,6 +12,7 @@ Mouse, in any view:
   left-drag inside the voxel   move it within that plane
   left-drag elsewhere          pan;  wheel / right-drag  zoom
   middle-drag                  image contrast (left/right) and brightness (up/down)
+  ctrl + wheel                 step that view's slice (stops the slices following the voxel)
 
 Rotating in each of the three views gives rotations about all three axes.
 """
@@ -18,6 +20,7 @@ Rotating in each of the three views gives rotations about all three axes.
 from __future__ import annotations
 
 import json
+from itertools import product
 from pathlib import Path
 
 import numpy as np
@@ -26,7 +29,7 @@ from PyQt6 import QtCore, QtWidgets
 
 from .geometry import (Plane, VoxelPose, nearest_vertex, point_in_polygon, section_polygon,
                        voxel_mask)
-from .siemens import (SiemensVoxel, format_position, normal_from_orientation_string,
+from .siemens import (LPS_RAS, SiemensVoxel, format_position, normal_from_orientation_string,
                       orientation_string, pose_from_nifti_mrs, pose_from_siemens,
                       siemens_from_pose, siemens_from_rda)
 from .volume import Volume, window_levels
@@ -44,6 +47,9 @@ VIEW_LABELS = {"Transverse": ("R", "L", "A"), "Coronal": ("R", "L", "H"),
                "Sagittal": ("A", "P", "H")}  # screen left, screen right, screen top
 
 VOXEL_PEN = pg.mkPen((255, 200, 0), width=2)
+# Each view's colour: its title, and the line marking its slice in the other views.
+SLICE_COLOURS = {"Transverse": (80, 160, 255), "Coronal": (80, 220, 120),
+                 "Sagittal": (255, 90, 160)}
 HANDLE_PX = 9  # handle size, and grab radius, in screen pixels
 WINDOW_DRAG_GAIN = 0.5  # brightness/contrast units per pixel of middle-drag
 Cursor = QtCore.Qt.CursorShape
@@ -74,6 +80,13 @@ class VoxelViewBox(pg.ViewBox):
         hit = self._hit((p.x(), p.y()))
         self.view.setCursor({"rotate": Cursor.CrossCursor, "move": Cursor.SizeAllCursor}
                             .get(hit, Cursor.ArrowCursor))
+
+    def wheelEvent(self, ev, axis=None):
+        if ev.modifiers() & QtCore.Qt.KeyboardModifier.ControlModifier:
+            ev.accept()
+            self.view.request_step(int(np.sign(ev.delta())))
+        else:
+            super().wheelEvent(ev, axis)
 
     def mouseDragEvent(self, ev, axis=None):
         if ev.button() == QtCore.Qt.MouseButton.MiddleButton:
@@ -118,7 +131,9 @@ class SliceView(pg.GraphicsLayoutWidget):
         self._cached_offset = None
 
         lo, hi, top = VIEW_LABELS[name]
-        self.addLabel(f"<b>{name}</b> &nbsp; {lo} ← → {hi}, up = {top}", row=0, col=0)
+        colour = "#{:02x}{:02x}{:02x}".format(*SLICE_COLOURS[name])
+        self.addLabel(f"<b style='color: {colour}'>{name}</b> &nbsp; {lo} ← → {hi}, up = {top}",
+                      row=0, col=0)
         self.vb = VoxelViewBox(self)
         self.addItem(self.vb, row=1, col=0)
         self.image = pg.ImageItem()
@@ -126,14 +141,24 @@ class SliceView(pg.GraphicsLayoutWidget):
         self.centre = pg.ScatterPlotItem(size=6, pen=None, brush=(255, 200, 0))
         self.handles = pg.ScatterPlotItem(size=HANDLE_PX, symbol="s", pen=VOXEL_PEN,
                                           brush=(0, 0, 0, 160))
-        for item in (self.image, self.outline, self.centre, self.handles):
+        # Where the other two views' slices cut this one.
+        self.slice_lines = {}
+        for other in VIEWS:
+            if other != name:
+                d = np.cross(self.plane.n, VIEWS[other].n)
+                self.slice_lines[other] = pg.InfiniteLine(
+                    angle=np.degrees(np.arctan2(d @ self.plane.v, d @ self.plane.h)),
+                    pen=pg.mkPen(SLICE_COLOURS[other], style=QtCore.Qt.PenStyle.DashLine))
+        for item in (self.image, *self.slice_lines.values(), self.outline, self.centre,
+                     self.handles):
             self.vb.addItem(item)
 
     def set_volume(self, vol: Volume):
         self._cached_offset = None
 
-    def refresh(self, vol: Volume | None, pose: VoxelPose, reset_range: bool = False):
-        self.plane = self.plane.through(pose.center)
+    def refresh(self, vol: Volume | None, pose: VoxelPose, slice_point,
+                reset_range: bool = False):
+        self.plane = self.plane.through(slice_point)
         if vol is not None and self._cached_offset != round(self.plane.offset, 3):
             pim = vol.sample_plane(self.plane)
             self.image.setImage(pim.image, levels=self.window.display.levels(), autoLevels=False)
@@ -141,11 +166,17 @@ class SliceView(pg.GraphicsLayoutWidget):
             self._cached_offset = round(self.plane.offset, 3)
             if reset_range:
                 self.vb.autoRange(padding=0.02)
+        for line in self.slice_lines.values():
+            line.setPos(self.plane.to_plane(slice_point))
+            line.setVisible(self.window.show_slice_lines)
         self.polygon = section_polygon(pose, self.plane)
         closed = np.vstack([self.polygon, self.polygon[:1]]) if len(self.polygon) else self.polygon
         self.outline.setData(closed[:, 0], closed[:, 1]) if len(closed) else self.outline.clear()
         self.handles.setData(self.polygon[:, 0], self.polygon[:, 1])
-        self.centre.setData(*[[v] for v in self.center_uv()])
+        if len(self.polygon):
+            self.centre.setData(*[[v] for v in self.center_uv()])
+        else:
+            self.centre.clear()
 
     def center_uv(self) -> np.ndarray:
         return self.plane.to_plane(self.window.pose.center)
@@ -157,6 +188,14 @@ class SliceView(pg.GraphicsLayoutWidget):
     def request_rotate(self, angle: float):
         self.window.set_pose(self.window.pose.rotated(self.plane.n, angle))
 
+    def request_step(self, steps: int):
+        """Move this view's slice by whole image voxels, towards S, A or R for steps > 0."""
+        vol = self.window.volume
+        spacing = vol.voxel_sizes.min() if vol is not None else 1.0
+        self.window.set_follow_voxel(False)
+        self.window.set_slice_point(self.window.slice_point
+                                    + steps * spacing * np.abs(self.plane.n))
+
 
 class ParameterPanel(QtWidgets.QWidget):
     """Siemens-style protocol parameters, editable and kept in sync with the pose."""
@@ -164,7 +203,16 @@ class ParameterPanel(QtWidgets.QWidget):
     def __init__(self, window: "MainWindow"):
         super().__init__()
         self.window = window
-        form = QtWidgets.QFormLayout(self)
+        columns = QtWidgets.QHBoxLayout(self)
+        columns.setContentsMargins(0, 0, 0, 0)
+
+        def column(title):
+            form = QtWidgets.QFormLayout()
+            form.addRow(QtWidgets.QLabel(f"<b>{title}</b>"))
+            if columns.count():
+                columns.addSpacing(24)
+            columns.addLayout(form)
+            return form
 
         def spin(lo, hi, step, suffix, decimals=1):
             s = QtWidgets.QDoubleSpinBox()
@@ -176,19 +224,26 @@ class ParameterPanel(QtWidgets.QWidget):
             s.valueChanged.connect(self._edited)
             return s
 
-        form.addRow(QtWidgets.QLabel("<b>Position (LPS, mm)</b>"))
+        form = column("Position (LPS, mm)")
         self.pos = [spin(-300, 300, 1, " mm") for _ in range(3)]
         for label, s in zip(("Sag", "Cor", "Tra"), self.pos):
             form.addRow(label, s)
         self.pos_text = QtWidgets.QLabel()
+        # Reserve the widest text the position range allows, so the column doesn't resize.
+        fm = self.pos_text.fontMetrics()
+        self.pos_text.setMinimumWidth(max(
+            fm.horizontalAdvance(format_position(np.multiply(signs, 888.8)))
+            for signs in product((1, -1), repeat=3)))
         form.addRow("", self.pos_text)
 
-        form.addRow(QtWidgets.QLabel("<b>Size</b>"))
+        form = column("Size")
         self.size = [spin(1, 200, 1, " mm") for _ in range(3)]
         for label, s in zip(("Readout FOV", "Phase FOV", "Thickness"), self.size):
             form.addRow(label, s)
+        self.volume_text = QtWidgets.QLabel()
+        form.addRow("Volume", self.volume_text)
 
-        form.addRow(QtWidgets.QLabel("<b>Orientation</b>"))
+        form = column("Orientation")
         self.orient_edit = QtWidgets.QLineEdit()
         self.orient_edit.setToolTip("Scanner-style angles, e.g. 'T > C -12.3 > S 4.1'. "
                                     "Edit and press Enter to set the slice normal.")
@@ -203,9 +258,6 @@ class ParameterPanel(QtWidgets.QWidget):
         reset = QtWidgets.QPushButton("Reset to transverse")
         reset.clicked.connect(self._reset_orientation)
         form.addRow(reset)
-
-        self.volume_text = QtWidgets.QLabel()
-        form.addRow("Volume", self.volume_text)
 
     def _widgets(self):
         return [*self.pos, *self.size, self.inplane]
@@ -256,6 +308,48 @@ class ParameterPanel(QtWidgets.QWidget):
         self.window.set_pose(VoxelPose.default(center=p.center, size=p.size))
 
 
+class SlicePanel(QtWidgets.QWidget):
+    """Where the views cut the volume: through the voxel centre, or set independently."""
+
+    def __init__(self, window: "MainWindow"):
+        super().__init__()
+        self.window = window
+        form = QtWidgets.QFormLayout(self)
+        form.setContentsMargins(0, 0, 0, 0)
+        form.addRow(QtWidgets.QLabel("<b>Slices (LPS, mm)</b>"))
+        self.follow = QtWidgets.QCheckBox("Follow voxel")
+        self.follow.setChecked(True)
+        self.follow.setToolTip("Keep all three views through the voxel centre. Untick to set "
+                               "the slices yourself, here or with ctrl + wheel in a view.")
+        self.follow.toggled.connect(self.window.set_follow_voxel)
+        form.addRow(self.follow)
+        self.lines = QtWidgets.QCheckBox("Show slice lines")
+        self.lines.setToolTip("Mark where each view's slice cuts the other two views, "
+                              "in the colour of that view's title.")
+        self.lines.toggled.connect(self.window.set_show_slice_lines)
+        form.addRow(self.lines)
+        self.pos = []
+        for label in ("Sag", "Cor", "Tra"):
+            s = QtWidgets.QDoubleSpinBox()
+            s.setRange(-300, 300)
+            s.setDecimals(1)
+            s.setSuffix(" mm")
+            s.setKeyboardTracking(False)
+            s.valueChanged.connect(self._edited)
+            form.addRow(label, s)
+            self.pos.append(s)
+
+    def show_point(self, point_ras):
+        for s, v in zip(self.pos, LPS_RAS @ point_ras):
+            s.blockSignals(True)
+            s.setValue(v)
+            s.blockSignals(False)
+            s.setEnabled(not self.window.follow_voxel)
+
+    def _edited(self):
+        self.window.set_slice_point(LPS_RAS @ np.array([s.value() for s in self.pos]))
+
+
 class DisplayPanel(QtWidgets.QWidget):
     """Brightness/contrast of the T1, shared by all views."""
 
@@ -265,6 +359,7 @@ class DisplayPanel(QtWidgets.QWidget):
         self.auto_range = (0.0, 1.0)
         self._drag_remainder = np.zeros(2)  # fractional slider steps from middle-drag
         form = QtWidgets.QFormLayout(self)
+        form.setContentsMargins(0, 0, 0, 0)
         form.addRow(QtWidgets.QLabel("<b>Display</b>"))
 
         def slider():
@@ -321,29 +416,28 @@ class MainWindow(QtWidgets.QMainWindow):
         self.setWindowTitle("MRS Voxel Planner")
         self.volume: Volume | None = None
         self.pose = VoxelPose.default()
+        self.slice_point = self.pose.center  # RAS point all three views pass through
+        self.follow_voxel = True
+        self.show_slice_lines = False
 
         self.views = [SliceView(name, self) for name in VIEWS]
         self.display = DisplayPanel(self)
+        self.slices = SlicePanel(self)
         self.panel = ParameterPanel(self)
 
         central = QtWidgets.QWidget()
-        layout = QtWidgets.QHBoxLayout(central)
+        layout = QtWidgets.QVBoxLayout(central)
         splitter = QtWidgets.QSplitter()
         for v in self.views:
             splitter.addWidget(v)
         layout.addWidget(splitter, stretch=1)
-        side_widget = QtWidgets.QWidget()
-        side_layout = QtWidgets.QVBoxLayout(side_widget)
-        side_layout.setContentsMargins(0, 0, 0, 0)
-        side_layout.addWidget(self.panel)
-        side_layout.addWidget(self.display)
-        side_layout.addStretch(1)
-        side = QtWidgets.QScrollArea()
-        side.setWidget(side_widget)
-        side.setWidgetResizable(True)
-        side.setHorizontalScrollBarPolicy(QtCore.Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        side.setFixedWidth(340)
-        layout.addWidget(side)
+        controls = QtWidgets.QHBoxLayout()
+        controls.setSpacing(24)
+        controls.addWidget(self.panel, alignment=QtCore.Qt.AlignmentFlag.AlignTop)
+        controls.addWidget(self.slices, alignment=QtCore.Qt.AlignmentFlag.AlignTop)
+        controls.addWidget(self.display, alignment=QtCore.Qt.AlignmentFlag.AlignTop)
+        controls.addStretch(1)
+        layout.addLayout(controls)
         self.setCentralWidget(central)
         self._build_menu()
         self.statusBar().showMessage("Open a T1 image (File > Open T1…)")
@@ -374,15 +468,42 @@ class MainWindow(QtWidgets.QMainWindow):
         self.display.set_auto_range(vol.display_range)
         if centre_voxel:
             self.pose = VoxelPose(vol.world_center(), self.pose.axes, self.pose.size)
+        self.slice_point = self.pose.center
         self.set_pose(self.pose, reset_range=True)
         self.statusBar().showMessage(f"{vol.name}  {vol.data.shape}  "
                                      f"{np.round(vol.voxel_sizes, 2).tolist()} mm")
 
     def set_pose(self, pose: VoxelPose, reset_range: bool = False):
         self.pose = pose
-        for v in self.views:
-            v.refresh(self.volume, pose, reset_range=reset_range)
+        if self.follow_voxel:
+            self.slice_point = pose.center
+        self._refresh_views(reset_range)
         self.panel.show_pose(pose)
+
+    def set_slice_point(self, point):
+        self.slice_point = np.asarray(point, dtype=float)
+        self._refresh_views()
+
+    def set_follow_voxel(self, on: bool):
+        if on == self.follow_voxel:
+            return
+        self.follow_voxel = on
+        self.slices.follow.setChecked(on)
+        if on:
+            self.slice_point = self.pose.center
+        self._refresh_views()
+
+    def set_show_slice_lines(self, on: bool):
+        if on == self.show_slice_lines:
+            return
+        self.show_slice_lines = on
+        self.slices.lines.setChecked(on)
+        self._refresh_views()
+
+    def _refresh_views(self, reset_range: bool = False):
+        for v in self.views:
+            v.refresh(self.volume, self.pose, self.slice_point, reset_range=reset_range)
+        self.slices.show_point(self.slice_point)
 
     # --- file actions ----------------------------------------------------
 
