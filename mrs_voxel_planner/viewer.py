@@ -339,6 +339,13 @@ class SlicePanel(QtWidgets.QWidget):
             form.addRow(label, s)
             self.pos.append(s)
 
+    def set_bounds(self, lo_ras, hi_ras):
+        a, b = LPS_RAS @ lo_ras, LPS_RAS @ hi_ras
+        for s, lo, hi in zip(self.pos, np.minimum(a, b), np.maximum(a, b)):
+            s.blockSignals(True)
+            s.setRange(lo, hi)
+            s.blockSignals(False)
+
     def show_point(self, point_ras):
         for s, v in zip(self.pos, LPS_RAS @ point_ras):
             s.blockSignals(True)
@@ -466,6 +473,7 @@ class MainWindow(QtWidgets.QMainWindow):
         for v in self.views:
             v.set_volume(vol)
         self.display.set_auto_range(vol.display_range)
+        self.slices.set_bounds(*vol.world_bounds())
         if centre_voxel:
             self.pose = VoxelPose(vol.world_center(), self.pose.axes, self.pose.size)
         self.slice_point = self.pose.center
@@ -501,6 +509,8 @@ class MainWindow(QtWidgets.QMainWindow):
         self._refresh_views()
 
     def _refresh_views(self, reset_range: bool = False):
+        if self.volume is not None:  # keep the slices within the image
+            self.slice_point = np.clip(self.slice_point, *self.volume.world_bounds())
         for v in self.views:
             v.refresh(self.volume, self.pose, self.slice_point, reset_range=reset_range)
         self.slices.show_point(self.slice_point)
@@ -525,6 +535,7 @@ class MainWindow(QtWidgets.QMainWindow):
             pose = pose_from_siemens(siemens_from_rda(p))
         else:
             pose = pose_from_nifti_mrs(p)
+        self.slice_point = pose.center  # show the loaded voxel even if the slices aren't following
         self.set_pose(pose)
 
     def save_voxel(self):

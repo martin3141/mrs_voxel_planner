@@ -45,11 +45,20 @@ class Volume:
         img = nib.load(str(path))
         return cls(img.get_fdata(dtype=np.float32), img.affine, name=str(path))
 
+    def _grid_corners(self, pad: float) -> np.ndarray:
+        """(8, 3) world positions of the grid corners, `pad` voxels beyond the corner centres."""
+        span = np.array(self.data.shape) - 1 + 2 * pad
+        idx = np.array([[(i >> 2) & 1, (i >> 1) & 1, i & 1] for i in range(8)]) * span - pad
+        return idx @ self.affine[:3, :3].T + self.affine[:3, 3]
+
     def world_corners(self) -> np.ndarray:
         """(8, 3) world positions of the outer corners of the image grid."""
-        n = np.array(self.data.shape)
-        idx = np.array([[(i >> 2) & 1, (i >> 1) & 1, i & 1] for i in range(8)]) * n - 0.5
-        return idx @ self.affine[:3, :3].T + self.affine[:3, 3]
+        return self._grid_corners(0.5)
+
+    def world_bounds(self) -> tuple[np.ndarray, np.ndarray]:
+        """RAS (min, max) over the centres of the corner voxels: where a slice can sit."""
+        corners = self._grid_corners(0.0)
+        return corners.min(axis=0), corners.max(axis=0)
 
     def world_center(self) -> np.ndarray:
         return self.world_corners().mean(axis=0)

@@ -42,8 +42,9 @@ thickness, orientation angles, and in-plane rotation, plus the derived slice nor
 The **Slices** section sets where the views cut the T1. With **Follow voxel** ticked (the default)
 all three views pass through the voxel centre. Untick it to set the sagittal, coronal and transverse
 slice positions (LPS mm) independently of the voxel, e.g. to check where its edges fall. Ticking it
-again snaps the views back to the voxel centre. **Show slice lines** draws dashed lines where each
-view's slice cuts the other two, in the colour of that view's title.
+again snaps the views back to the voxel centre. Loading a voxel always moves the slices to it, and
+slices stay within the image. **Show slice lines** draws dashed lines where each view's slice cuts
+the other two, in the colour of that view's title.
 
 The **Display** section has brightness and contrast sliders, shared by all three views.
 **Auto** resets them to the 1st–99.5th percentile intensity window.

@@ -26,6 +26,18 @@ def test_sample_plane_follows_affine():
     assert np.allclose(pim.image[interior], expected[interior], atol=1e-3)
 
 
+def test_world_bounds_span_voxel_centres():
+    affine = np.eye(4)
+    affine[:3, :3] = rotation_matrix([1, 2, 3], 0.5) @ np.diag([1.0, 1.5, 2.0])
+    affine[:3, 3] = [-20, 10, 5]
+    vol = Volume(np.zeros((12, 9, 7)), affine)
+    idx = np.indices(vol.data.shape).reshape(3, -1).T
+    centres = idx @ affine[:3, :3].T + affine[:3, 3]
+    lo, hi = vol.world_bounds()
+    assert np.allclose(lo, centres.min(axis=0))
+    assert np.allclose(hi, centres.max(axis=0))
+
+
 def test_window_levels():
     from mrs_voxel_planner.volume import window_levels
 
