@@ -53,9 +53,7 @@ The **Display** section has brightness and contrast sliders, shared by all three
 
 The **Angles** field uses the scanner's notation, e.g. `T > C -23.9 > S 4.5`. You can type one in
 (`Tra>Cor(-23.9)>Sag(4.5)` is also accepted) and press Enter to set the slice normal; the voxel
-centre and in-plane rotation are kept. The convention is checked against scanner-reported
-(string, sNormal) pairs, which were all transverse. Coronal- and sagittal-based strings follow the
-same rule but haven't been checked against a scanner yet.
+centre and in-plane rotation are kept.
 
 **File menu:** load a voxel from JSON, Siemens `.rda` or single-voxel NIfTI-MRS (spec2nii);
 save the voxel as JSON (world pose plus Siemens `sPosition`/`sNormal`/`dInPlaneRot`); export a

@@ -113,8 +113,7 @@ def orientation_string(normal) -> str:
     towards axis B by beta, where a tilt of theta towards X moves the normal
     by -sin(theta) along X (LPS):
         n = cos(beta) * (cos(alpha) e_main - sin(alpha) e_A) - sin(beta) e_B
-    The larger tilt is listed first. This matches scanner-reported
-    (string, sNormal) pairs; the sign of the normal is ignored.
+    The larger tilt is listed first; the sign of the normal is ignored.
     """
     n = np.asarray(normal, dtype=float)
     n = n / np.linalg.norm(n)
