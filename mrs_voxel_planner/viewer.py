@@ -466,10 +466,10 @@ class MainWindow(QtWidgets.QMainWindow):
 
         central = QtWidgets.QWidget()
         layout = QtWidgets.QVBoxLayout(central)
-        splitter = QtWidgets.QSplitter()
+        self.views_row = QtWidgets.QSplitter()
         for v in self.views:
-            splitter.addWidget(v)
-        layout.addWidget(splitter, stretch=1)
+            self.views_row.addWidget(v)
+        layout.addWidget(self.views_row, stretch=1)
         controls = QtWidgets.QHBoxLayout()
         controls.setSpacing(24)
         controls.addWidget(self.panel, alignment=QtCore.Qt.AlignmentFlag.AlignTop)
@@ -490,6 +490,7 @@ class MainWindow(QtWidgets.QMainWindow):
             ("Load voxel (JSON / Siemens RDA / NIfTI-MRS)…", self.load_voxel, "Ctrl+L"),
             ("Save voxel…", self.save_voxel, "Ctrl+S"),
             ("Export voxel mask…", self.export_mask, "Ctrl+E"),
+            ("Export figure…", self.export_figure, "Ctrl+Shift+E"),
             (None, None, None),
             ("Quit", self.close, "Ctrl+Q"),
         ]:
@@ -646,3 +647,14 @@ class MainWindow(QtWidgets.QMainWindow):
             vox_ml = np.prod(self.volume.voxel_sizes) / 1000
             self.statusBar().showMessage(f"Saved {path}: mask {mask.sum() * vox_ml:.2f} mL "
                                          f"(box {self.pose.volume_mm3 / 1000:.2f} mL)")
+
+    def export_figure(self):
+        """Save the three views, as currently shown, as an image (e.g. for a methods figure)."""
+        path = self._choose_file("Export figure", "Images (*.png *.jpg *.tif)", "voxel_figure.png")
+        if not path:
+            return
+        self._remember_dir(path)
+        with self._reporting("Export figure"):
+            if not self.views_row.grab().save(path):
+                raise OSError(f"could not write {path} (unsupported image type or folder)")
+            self.statusBar().showMessage(f"Saved {path}")

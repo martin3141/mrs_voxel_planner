@@ -12,7 +12,7 @@ license-files = ["LICENSE"]
 dependencies = ["numpy", "scipy", "nibabel", "pyqtgraph", "PyQt6"]
 
 [project.optional-dependencies]
-dev = ["pytest"]
+dev = ["pytest", "pytest-qt"]
 
 [project.scripts]
 mrs_voxel_planner = "mrs_voxel_planner.app:main"
