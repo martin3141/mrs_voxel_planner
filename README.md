@@ -73,8 +73,8 @@ partial-volume voxel mask on the T1 grid (use with FAST/SPM segmentations for ti
 
 The box shape does not depend on convention details, but the reported in-plane rotation and the
 readout/phase assignment do. Check them against a real acquisition: load the scan's `.rda`
-(the reader cross-checks RowVector/ColumnVector against the derived axes and warns on a mismatch),
-or its spec2nii NIfTI-MRS, on the same subject's T1.
+(the reader cross-checks RowVector/ColumnVector against the derived axes and shows a warning on
+a mismatch), or its spec2nii NIfTI-MRS, on the same subject's T1.
 
 Run the tests with `.venv/bin/pytest`.
 

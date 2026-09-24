@@ -20,6 +20,8 @@ Rotating in each of the three views gives rotations about all three axes.
 from __future__ import annotations
 
 import json
+import warnings
+from contextlib import contextmanager
 from itertools import product
 from pathlib import Path
 
@@ -517,11 +519,30 @@ class MainWindow(QtWidgets.QMainWindow):
 
     # --- file actions ----------------------------------------------------
 
+    @contextmanager
+    def _reporting(self, action: str):
+        """Show errors and warnings from a file action in a dialog, not just on stderr.
+
+        Warnings are shown every time (Python normally shows each only once), so a
+        second RDA whose direction vectors don't match is still reported.
+        """
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            try:
+                yield
+            except Exception as e:
+                QtWidgets.QMessageBox.critical(self, action,
+                                               f"{action} failed.\n\n{type(e).__name__}: {e}")
+        if caught:
+            QtWidgets.QMessageBox.warning(self, action,
+                                          "\n\n".join(str(w.message) for w in caught))
+
     def open_t1(self, path=None):
         path = path or QtWidgets.QFileDialog.getOpenFileName(
             self, "Open T1", "", "NIfTI (*.nii *.nii.gz)")[0]
         if path:
-            self.set_volume(Volume.load(path))
+            with self._reporting("Open T1"):
+                self.set_volume(Volume.load(path))
 
     def load_voxel(self, path=None):
         path = path or QtWidgets.QFileDialog.getOpenFileName(
@@ -529,14 +550,15 @@ class MainWindow(QtWidgets.QMainWindow):
         if not path:
             return
         p = Path(path)
-        if p.suffix.lower() == ".json":
-            pose = VoxelPose.from_dict(json.loads(p.read_text()))
-        elif p.suffix.lower() == ".rda":
-            pose = pose_from_siemens(siemens_from_rda(p))
-        else:
-            pose = pose_from_nifti_mrs(p)
-        self.slice_point = pose.center  # show the loaded voxel even if the slices aren't following
-        self.set_pose(pose)
+        with self._reporting("Load voxel"):
+            if p.suffix.lower() == ".json":
+                pose = VoxelPose.from_dict(json.loads(p.read_text()))
+            elif p.suffix.lower() == ".rda":
+                pose = pose_from_siemens(siemens_from_rda(p))
+            else:
+                pose = pose_from_nifti_mrs(p)
+            self.slice_point = pose.center  # show it even if the slices aren't following
+            self.set_pose(pose)
 
     def save_voxel(self):
         path = QtWidgets.QFileDialog.getSaveFileName(self, "Save voxel", "voxel.json",
@@ -544,7 +566,8 @@ class MainWindow(QtWidgets.QMainWindow):
         if path:
             d = self.pose.to_dict()
             d["siemens"] = siemens_from_pose(self.pose).to_dict()
-            Path(path).write_text(json.dumps(d, indent=2))
+            with self._reporting("Save voxel"):
+                Path(path).write_text(json.dumps(d, indent=2))
 
     def export_mask(self):
         if self.volume is None:
@@ -556,7 +579,8 @@ class MainWindow(QtWidgets.QMainWindow):
         import nibabel as nib
 
         mask = voxel_mask(self.pose, self.volume.data.shape, self.volume.affine)
-        nib.save(nib.Nifti1Image(mask, self.volume.affine), path)
-        vox_ml = np.prod(self.volume.voxel_sizes) / 1000
-        self.statusBar().showMessage(f"Saved {path}: mask {mask.sum() * vox_ml:.2f} mL "
-                                     f"(box {self.pose.volume_mm3 / 1000:.2f} mL)")
+        with self._reporting("Export voxel mask"):
+            nib.save(nib.Nifti1Image(mask, self.volume.affine), path)
+            vox_ml = np.prod(self.volume.voxel_sizes) / 1000
+            self.statusBar().showMessage(f"Saved {path}: mask {mask.sum() * vox_ml:.2f} mL "
+                                         f"(box {self.pose.volume_mm3 / 1000:.2f} mL)")

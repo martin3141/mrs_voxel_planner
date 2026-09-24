@@ -178,9 +178,18 @@ def read_rda_header(path) -> dict:
     return header
 
 
+_RDA_VOI_KEYS = [f"VOI{name}{axis}" for name in ("Position", "Normal")
+                 for axis in ("Sag", "Cor", "Tra")] \
+    + ["VOIRotationInPlane", "VOIReadoutFOV", "VOIPhaseFOV", "VOIThickness"]
+
+
 def siemens_from_rda(path) -> SiemensVoxel:
     """Read the VOI geometry from a Siemens .rda export."""
     h = read_rda_header(path)
+    missing = [k for k in _RDA_VOI_KEYS if k not in h]
+    if missing:
+        raise ValueError(f"{path}: no single-voxel geometry in the RDA header "
+                         f"(missing {', '.join(missing)})")
     f = lambda k: float(h[k])  # noqa: E731
     sv = SiemensVoxel(position=(f("VOIPositionSag"), f("VOIPositionCor"), f("VOIPositionTra")),
                       normal=(f("VOINormalSag"), f("VOINormalCor"), f("VOINormalTra")),

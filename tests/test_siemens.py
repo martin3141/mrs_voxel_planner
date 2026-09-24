@@ -64,6 +64,13 @@ def write_rda(path, sv, row=None, col=None):
     path.write_bytes(("\r\n".join(lines) + "\r\n").encode("latin-1") + b"\x00" * 16)
 
 
+def test_read_rda_without_voi_geometry(tmp_path):
+    (tmp_path / "c.rda").write_text(">>> Begin of header <<<\nVOIPositionSag: 1.0\n"
+                                    ">>> End of header <<<\n")
+    with pytest.raises(ValueError, match="missing VOIPositionCor"):
+        siemens_from_rda(tmp_path / "c.rda")
+
+
 def test_read_rda(tmp_path):
     sv = SiemensVoxel((1.5, -20.0, 12.0), (0.0, 0.2588190451, 0.9659258263), 0.2, 20, 25, 15)
     gp, gr = phase_readout(sv.normal, sv.inplane_rot)
