@@ -30,6 +30,8 @@ In any view:
 | wheel / right-drag | zoom |
 | middle-drag | contrast (left/right) and brightness (up/down) of the T1 |
 | ctrl + wheel | step that view's slice by one image voxel (turns off **Follow voxel**) |
+| arrow keys | move the voxel 1 mm within the last-clicked view |
+| ctrl + Z / ctrl + shift + Z | undo / redo voxel changes (also in the **Edit** menu) |
 
 Rotating in the transverse, coronal and sagittal views turns the voxel about the
 head–foot, anterior–posterior and left–right axes respectively, so combining them reaches any
@@ -58,6 +60,7 @@ same rule but haven't been checked against a scanner yet.
 **File menu:** load a voxel from JSON, Siemens `.rda` or single-voxel NIfTI-MRS (spec2nii);
 save the voxel as JSON (world pose plus Siemens `sPosition`/`sNormal`/`dInPlaneRot`); export a
 partial-volume voxel mask on the T1 grid (use with FAST/SPM segmentations for tissue fractions).
+File dialogs open in the last folder used, which is remembered between sessions.
 
 ## Design
 

@@ -14,6 +14,9 @@ Mouse, in any view:
   middle-drag                  image contrast (left/right) and brightness (up/down)
   ctrl + wheel                 step that view's slice (stops the slices following the voxel)
 
+Keyboard: arrow keys move the voxel 1 mm in the last-clicked view; ctrl+Z / ctrl+shift+Z
+undo and redo voxel changes.
+
 Rotating in each of the three views gives rotations about all three axes.
 """
 
@@ -54,7 +57,14 @@ SLICE_COLOURS = {"Transverse": (80, 160, 255), "Coronal": (80, 220, 120),
                  "Sagittal": (255, 90, 160)}
 HANDLE_PX = 9  # handle size, and grab radius, in screen pixels
 WINDOW_DRAG_GAIN = 0.5  # brightness/contrast units per pixel of middle-drag
+NUDGE_MM = 1.0  # arrow-key voxel step
+UNDO_LIMIT = 100
 Cursor = QtCore.Qt.CursorShape
+
+
+def _same_pose(a: VoxelPose, b: VoxelPose) -> bool:
+    return all(np.array_equal(x, y) for x, y in
+               ((a.center, b.center), (a.axes, b.axes), (a.size, b.size)))
 
 
 class VoxelViewBox(pg.ViewBox):
@@ -108,6 +118,8 @@ class VoxelViewBox(pg.ViewBox):
                 self._mode = "rotate"
             else:
                 self._mode = self._hit(self._last)
+            if self._mode is not None:
+                self.view.window.remember_pose()  # one undo step per drag
         if self._mode is None:
             return super().mouseDragEvent(ev, axis)
         ev.accept()
@@ -183,6 +195,15 @@ class SliceView(pg.GraphicsLayoutWidget):
     def center_uv(self) -> np.ndarray:
         return self.plane.to_plane(self.window.pose.center)
 
+    def keyPressEvent(self, ev):
+        Key = QtCore.Qt.Key
+        step = {Key.Key_Left: (-1, 0), Key.Key_Right: (1, 0),
+                Key.Key_Up: (0, 1), Key.Key_Down: (0, -1)}.get(ev.key())
+        if step is None:
+            return super().keyPressEvent(ev)
+        self.window.remember_pose()
+        self.request_move(np.multiply(step, NUDGE_MM))
+
     def request_move(self, duv):
         delta = duv[0] * self.plane.h + duv[1] * self.plane.v
         self.window.set_pose(self.window.pose.translated(delta))
@@ -243,6 +264,9 @@ class ParameterPanel(QtWidgets.QWidget):
         for label, s in zip(("Readout FOV", "Phase FOV", "Thickness"), self.size):
             form.addRow(label, s)
         self.volume_text = QtWidgets.QLabel()
+        # Room for the largest volume the size limits allow (200^3 mm^3 = 8000.00 mL).
+        self.volume_text.setMinimumWidth(
+            self.volume_text.fontMetrics().horizontalAdvance("8888.88 mL"))
         form.addRow("Volume", self.volume_text)
 
         form = column("Orientation")
@@ -288,6 +312,7 @@ class ParameterPanel(QtWidgets.QWidget):
                           inplane_rot=np.radians(self.inplane.value()),
                           readout_fov=self.size[0].value(), phase_fov=self.size[1].value(),
                           thickness=self.size[2].value())
+        self.window.remember_pose()
         self.window.set_pose(pose_from_siemens(sv))
 
     def _orientation_edited(self):
@@ -301,12 +326,14 @@ class ParameterPanel(QtWidgets.QWidget):
             self.window.statusBar().showMessage(str(e), 5000)
             self.orient_edit.setText(orientation_string(old.normal))
             return
+        self.window.remember_pose()
         self.window.set_pose(pose_from_siemens(SiemensVoxel(
             old.position, tuple(normal), old.inplane_rot, old.readout_fov, old.phase_fov,
             old.thickness)))
 
     def _reset_orientation(self):
         p = self.window.pose
+        self.window.remember_pose()
         self.window.set_pose(VoxelPose.default(center=p.center, size=p.size))
 
 
@@ -428,6 +455,9 @@ class MainWindow(QtWidgets.QMainWindow):
         self.slice_point = self.pose.center  # RAS point all three views pass through
         self.follow_voxel = True
         self.show_slice_lines = False
+        self._undo: list[VoxelPose] = []
+        self._redo: list[VoxelPose] = []
+        self.settings = QtCore.QSettings("mrs_voxel_planner", "mrs_voxel_planner")
 
         self.views = [SliceView(name, self) for name in VIEWS]
         self.display = DisplayPanel(self)
@@ -467,6 +497,9 @@ class MainWindow(QtWidgets.QMainWindow):
                 m.addSeparator()
             else:
                 m.addAction(text, key, slot)
+        e = self.menuBar().addMenu("&Edit")
+        e.addAction("Undo voxel change", "Ctrl+Z", self.undo)
+        e.addAction("Redo voxel change", "Ctrl+Shift+Z", self.redo)
 
     # --- state -----------------------------------------------------------
 
@@ -489,6 +522,23 @@ class MainWindow(QtWidgets.QMainWindow):
             self.slice_point = pose.center
         self._refresh_views(reset_range)
         self.panel.show_pose(pose)
+
+    def remember_pose(self):
+        """Record the current pose for undo. Call before a user edit changes it."""
+        if not self._undo or not _same_pose(self._undo[-1], self.pose):
+            self._undo.append(self.pose)
+            del self._undo[:-UNDO_LIMIT]
+        self._redo.clear()
+
+    def undo(self):
+        if self._undo:
+            self._redo.append(self.pose)
+            self.set_pose(self._undo.pop())
+
+    def redo(self):
+        if self._redo:
+            self._undo.append(self.pose)
+            self.set_pose(self._redo.pop())
 
     def set_slice_point(self, point):
         self.slice_point = np.asarray(point, dtype=float)
@@ -537,18 +587,29 @@ class MainWindow(QtWidgets.QMainWindow):
             QtWidgets.QMessageBox.warning(self, action,
                                           "\n\n".join(str(w.message) for w in caught))
 
+    def _choose_file(self, title: str, filters: str, save_name: str | None = None) -> str:
+        """Open (or, given save_name, save) file dialog starting in the last folder used."""
+        last = self.settings.value("last_dir", "", type=str)
+        if save_name is None:
+            return QtWidgets.QFileDialog.getOpenFileName(self, title, last, filters)[0]
+        start = str(Path(last) / save_name) if last else save_name
+        return QtWidgets.QFileDialog.getSaveFileName(self, title, start, filters)[0]
+
+    def _remember_dir(self, path):
+        self.settings.setValue("last_dir", str(Path(path).resolve().parent))
+
     def open_t1(self, path=None):
-        path = path or QtWidgets.QFileDialog.getOpenFileName(
-            self, "Open T1", "", "NIfTI (*.nii *.nii.gz)")[0]
+        path = path or self._choose_file("Open T1", "NIfTI (*.nii *.nii.gz)")
         if path:
+            self._remember_dir(path)
             with self._reporting("Open T1"):
                 self.set_volume(Volume.load(path))
 
     def load_voxel(self, path=None):
-        path = path or QtWidgets.QFileDialog.getOpenFileName(
-            self, "Load voxel", "", "Voxel (*.json *.rda *.nii *.nii.gz)")[0]
+        path = path or self._choose_file("Load voxel", "Voxel (*.json *.rda *.nii *.nii.gz)")
         if not path:
             return
+        self._remember_dir(path)
         p = Path(path)
         with self._reporting("Load voxel"):
             if p.suffix.lower() == ".json":
@@ -558,12 +619,13 @@ class MainWindow(QtWidgets.QMainWindow):
             else:
                 pose = pose_from_nifti_mrs(p)
             self.slice_point = pose.center  # show it even if the slices aren't following
+            self.remember_pose()
             self.set_pose(pose)
 
     def save_voxel(self):
-        path = QtWidgets.QFileDialog.getSaveFileName(self, "Save voxel", "voxel.json",
-                                                     "JSON (*.json)")[0]
+        path = self._choose_file("Save voxel", "JSON (*.json)", "voxel.json")
         if path:
+            self._remember_dir(path)
             d = self.pose.to_dict()
             d["siemens"] = siemens_from_pose(self.pose).to_dict()
             with self._reporting("Save voxel"):
@@ -572,10 +634,10 @@ class MainWindow(QtWidgets.QMainWindow):
     def export_mask(self):
         if self.volume is None:
             return
-        path = QtWidgets.QFileDialog.getSaveFileName(self, "Export mask", "voxel_mask.nii.gz",
-                                                     "NIfTI (*.nii.gz *.nii)")[0]
+        path = self._choose_file("Export mask", "NIfTI (*.nii.gz *.nii)", "voxel_mask.nii.gz")
         if not path:
             return
+        self._remember_dir(path)
         import nibabel as nib
 
         mask = voxel_mask(self.pose, self.volume.data.shape, self.volume.affine)
