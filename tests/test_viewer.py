@@ -198,19 +198,52 @@ def test_file_dialogs_start_in_last_folder(window, tmp_path, monkeypatch):
     assert starts[1:] == [str(data), str(data / "voxel.json")]
 
 
+def patch_scale_dialog(monkeypatch, choice: int | None):
+    """Make the figure-resolution dialog pick `choice`x (None = cancel); returns its defaults."""
+    defaults = []
+
+    def get_item(parent, title, label, items, current, editable):
+        defaults.append(items[current])
+        if choice is None:
+            return "", False
+        return next(i for i in items if i.startswith(f"{choice}×")), True
+
+    monkeypatch.setattr(QtWidgets.QInputDialog, "getItem", staticmethod(get_item))
+    return defaults
+
+
 def test_export_figure(window, tmp_path, monkeypatch, dialogs):
+    size = window.views_row.size()
     path = tmp_path / "figure.png"
     patch_file_dialogs(monkeypatch, str(path))
+    defaults = patch_scale_dialog(monkeypatch, 3)
     window.export_figure()
     image = QtGui.QImage(str(path))
-    assert not image.isNull()
-    ratio = window.views_row.devicePixelRatioF()
-    assert image.width() == round(window.views_row.width() * ratio)
+    assert (image.width(), image.height()) == (size.width() * 3, size.height() * 3)
+    assert defaults[0].startswith("2×")  # default the first time
     assert dialogs == []
 
+    window.export_figure()  # the last choice is remembered
+    assert defaults[1].startswith("3×")
+
+    path.unlink()
+    patch_scale_dialog(monkeypatch, None)  # cancelling writes nothing
+    window.export_figure()
+    assert not path.exists()
+
     patch_file_dialogs(monkeypatch, str(tmp_path / "missing" / "figure.png"))
+    patch_scale_dialog(monkeypatch, 1)
     window.export_figure()
     assert [kind for kind, _ in dialogs] == ["error"]
+
+
+def test_figure_matches_the_screen(window):
+    # At 1x the redrawn figure is the same picture as a screenshot of the views.
+    shot = window.views_row.grab().toImage()
+    shot.setDevicePixelRatio(1)
+    figure = window.render_figure(1)
+    assert figure.size() == shot.size()
+    assert figure.convertToFormat(shot.format()) == shot
 
 
 # --- editing ----------------------------------------------------------------

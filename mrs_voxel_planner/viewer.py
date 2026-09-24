@@ -30,7 +30,7 @@ from pathlib import Path
 
 import numpy as np
 import pyqtgraph as pg
-from PyQt6 import QtCore, QtWidgets
+from PyQt6 import QtCore, QtGui, QtWidgets
 
 from .geometry import (Plane, VoxelPose, nearest_vertex, point_in_polygon, section_polygon,
                        voxel_mask)
@@ -59,6 +59,7 @@ HANDLE_PX = 9  # handle size, and grab radius, in screen pixels
 WINDOW_DRAG_GAIN = 0.5  # brightness/contrast units per pixel of middle-drag
 NUDGE_MM = 1.0  # arrow-key voxel step
 UNDO_LIMIT = 100
+FIGURE_SCALES = (1, 2, 3, 4)  # export figure resolution, times the on-screen size
 Cursor = QtCore.Qt.CursorShape
 
 
@@ -648,13 +649,44 @@ class MainWindow(QtWidgets.QMainWindow):
             self.statusBar().showMessage(f"Saved {path}: mask {mask.sum() * vox_ml:.2f} mL "
                                          f"(box {self.pose.volume_mm3 / 1000:.2f} mL)")
 
+    def render_figure(self, scale: int = 1) -> QtGui.QImage:
+        """The three views as shown, redrawn at `scale` times the on-screen size.
+
+        Rendering at a higher device pixel ratio redraws text and outlines sharply,
+        rather than enlarging a screenshot.
+        """
+        image = QtGui.QImage(self.views_row.size() * scale, QtGui.QImage.Format.Format_RGB32)
+        image.setDevicePixelRatio(scale)
+        image.fill(QtCore.Qt.GlobalColor.black)
+        painter = QtGui.QPainter(image)
+        self.views_row.render(painter)
+        painter.end()
+        return image
+
+    def _choose_figure_scale(self) -> int | None:
+        size = self.views_row.size()
+        items = [f"{s}×  ({size.width() * s} × {size.height() * s} px)" for s in FIGURE_SCALES]
+        last = self.settings.value("figure_scale", 2, type=int)
+        current = FIGURE_SCALES.index(last) if last in FIGURE_SCALES else 1
+        item, ok = QtWidgets.QInputDialog.getItem(self, "Export figure", "Resolution:", items,
+                                                  current, False)
+        if not ok:
+            return None
+        scale = FIGURE_SCALES[items.index(item)]
+        self.settings.setValue("figure_scale", scale)
+        return scale
+
     def export_figure(self):
         """Save the three views, as currently shown, as an image (e.g. for a methods figure)."""
         path = self._choose_file("Export figure", "Images (*.png *.jpg *.tif)", "voxel_figure.png")
         if not path:
             return
         self._remember_dir(path)
+        scale = self._choose_figure_scale()
+        if scale is None:
+            return
         with self._reporting("Export figure"):
-            if not self.views_row.grab().save(path):
+            image = self.render_figure(scale)
+            if not image.save(path):
                 raise OSError(f"could not write {path} (unsupported image type or folder)")
-            self.statusBar().showMessage(f"Saved {path}")
+            self.statusBar().showMessage(f"Saved {path} ({image.width()} × {image.height()} px)")

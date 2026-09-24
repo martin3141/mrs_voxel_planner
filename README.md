@@ -58,7 +58,8 @@ centre and in-plane rotation are kept.
 **File menu:** load a voxel from JSON, Siemens `.rda` or single-voxel NIfTI-MRS (spec2nii);
 save the voxel as JSON (world pose plus Siemens `sPosition`/`sNormal`/`dInPlaneRot`); export a
 partial-volume voxel mask on the T1 grid (use with FAST/SPM segmentations for tissue fractions);
-export the three views as shown, with the voxel drawn in, as a PNG/JPEG/TIFF figure.
+export the three views as shown, with the voxel drawn in, as a PNG/JPEG/TIFF figure at 1–4× the
+on-screen resolution (text and outlines are redrawn sharply, not enlarged).
 File dialogs open in the last folder used, which is remembered between sessions.
 
 ## Design
